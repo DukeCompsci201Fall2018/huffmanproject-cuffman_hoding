@@ -1,3 +1,4 @@
+import java.util.Arrays;
 import java.util.PriorityQueue;
 
 /**
@@ -37,6 +38,7 @@ public class HuffProcessor {
 	
 	private int[] read_for_counts(BitInputStream in) {
 	    int[] ret = new int[ALPH_SIZE + 1];
+	    ret[PSEUDO_EOF] = 1;
 	    while(true) {
 	        int val = in.readBits(BITS_PER_WORD);
 	        if (val == -1) break;
@@ -70,7 +72,11 @@ public class HuffProcessor {
     }
     
     private void coding(HuffNode node, String track, String[] ret) {
-        if (node.myValue != 0) ret[node.myValue] = track;
+        if (node == null) return;
+        if (node.myLeft == null && node.myRight == null) {
+            ret[node.myValue] = track;
+            return;
+        }
         else {
             coding(node.myLeft, track + "0", ret);
             coding(node.myRight, track + "1", ret);
@@ -85,19 +91,21 @@ public class HuffProcessor {
             String encoded = codings[letter];
             out.writeBits(encoded.length(), Integer.parseInt(encoded, 2));
         }
+        // System.out.println(Arrays.deepToString(codings));
+        // System.out.println(codings[PSEUDO_EOF]);
         out.writeBits(codings[PSEUDO_EOF].length(), Integer.parseInt(codings[PSEUDO_EOF], 2));
         
     }
     
     private void write_header(HuffNode root, BitOutputStream out) {
-        if (root.myValue == 0) {
+        if (root.myLeft == null && root.myRight == null) {
+            out.writeBits(1, 1);
+            out.writeBits(BITS_PER_WORD + 1, root.myValue);
+        }
+        else {
             out.writeBits(1, 0);
             write_header(root.myLeft, out);
             write_header(root.myRight, out);
-        }
-        else {
-            out.writeBits(1, 1);
-            out.writeBits(BITS_PER_WORD, root.myValue);
         }
     }
     
@@ -122,30 +130,19 @@ public class HuffProcessor {
 	    write_compressed_bits(codings, in, out);
 	    out.close();
 	}
-
-
-    /**
-	 * Decompresses a file. Output file must be identical bit-by-bit to the
-	 * original.
-	 *
-	 * @param in
-	 *            Buffered bit stream of the file to be decompressed.
-	 * @param out
-	 *            Buffered bit stream writing to the output file.
-	 */
 	
 	private HuffNode read_trees(BitInputStream in) {
 	    int bit_read = in.readBits(1);
-	    switch(bit_read) {
-    	    case -1:
-    	        throw new HuffException("illegal -1");
-    	    case 0:
-    	        HuffNode l = read_trees(in);
-    	        HuffNode r = read_trees(in);
-    	        return new HuffNode(0, 0, l, r);
-    	    default:
-    	        return new HuffNode(in.readBits(BITS_PER_WORD + 1), 0, null, null);
-	    }
+	    if (bit_read == -1) throw new HuffException("illegal -1");
+    	if (bit_read == 0) {
+    	    HuffNode l = read_trees(in);
+    	    HuffNode r = read_trees(in);
+    	    return new HuffNode(0, 0, l, r);
+    	}
+    	else {
+    	    int value = in.readBits(BITS_PER_WORD + 1);
+    	    return new HuffNode(value, 0, null, null);
+    	}
 	}
 	
 	private void read_compressed_bits(HuffNode root, BitInputStream in, BitOutputStream out) {
@@ -154,12 +151,15 @@ public class HuffProcessor {
 	        int bit = in.readBits(1);
 	        if (bit == -1) throw new HuffException("bad input, no PSEUDO_EOF");
 	        else {
-	            if (bit == 0) tmp = tmp.myLeft;
-	            else tmp = tmp.myRight;
-	            if (tmp.myValue != 0) {
+	            if (bit == 0 && tmp.myLeft != null) tmp = tmp.myLeft;
+	            else {
+	                if (tmp.myRight != null) tmp = tmp.myRight;
+	            }
+
+	            if (tmp.myLeft == null && tmp.myRight == null) {
 	                if (tmp.myValue == PSEUDO_EOF) break;
 	                else {
-	                    out.writeBits(BITS_PER_INT, tmp.myValue);
+	                    out.writeBits(BITS_PER_WORD, tmp.myValue);
 	                    tmp = root;
 	                }
 	            }
@@ -167,11 +167,20 @@ public class HuffProcessor {
 	    }
 	}
 	
+	/**
+     * Decompresses a file. Output file must be identical bit-by-bit to the
+     * original.
+     *
+     * @param in
+     *            Buffered bit stream of the file to be decompressed.
+     * @param out
+     *            Buffered bit stream writing to the output file.
+     */
 	public void decompress(BitInputStream in, BitOutputStream out){
 	    
 	    // Check the standard header
 	    int bits = in.readBits(BITS_PER_INT);
-	    if (bits != HUFF_TREE) throw new HuffException("illegal header starts with"+  bits);
+	    if (bits != HUFF_TREE) throw new HuffException("illegal header starts with" + bits);
 	    HuffNode root = read_trees(in);
 	    read_compressed_bits(root, in, out);
 		out.close();
